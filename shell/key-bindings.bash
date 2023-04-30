@@ -50,7 +50,7 @@ __fzf_cd__() {
 
 __fzf_history__() {
   local output opts script
-  opts="--height ${FZF_TMUX_HEIGHT:-40%} --bind=ctrl-z:ignore ${FZF_DEFAULT_OPTS-} -n2..,.. --scheme=history --bind=ctrl-r:toggle-sort ${FZF_CTRL_R_OPTS-} +m --read0"
+  opts="--height ${FZF_TMUX_HEIGHT:-40%} --bind=ctrl-z:ignore ${FZF_DEFAULT_OPTS-} -n2..,.. --bind=ctrl-r:toggle-sort ${FZF_CTRL_R_OPTS-} +m --read0"
   script='BEGIN { getc; $/ = "\n\t"; $HISTCOUNT = $ENV{last_hist} + 1 } s/^[ *]//; print $HISTCOUNT - $. . "\t$_" if !$seen{$_}++'
   output=$(
     builtin fc -lnr -2147483648 |
@@ -63,6 +63,10 @@ __fzf_history__() {
   else
     READLINE_POINT=0x7fffffff
   fi
+}
+
+__tmux_search__(){
+    $HOME/.fzf/shell/tmux_search.sh
 }
 
 # Required to refresh the prompt after fzf
@@ -82,6 +86,11 @@ if (( BASH_VERSINFO[0] < 4 )); then
   bind -m emacs-standard '"\C-r": "\C-e \C-u\C-y\ey\C-u"$(__fzf_history__)"\e\C-e\er"'
   bind -m vi-command '"\C-r": "\C-z\C-r\C-z"'
   bind -m vi-insert '"\C-r": "\C-z\C-r\C-z"'
+
+  # CTRL-F - Paste the selected command from history into the command line
+  bind -m emacs-standard '"\C-f": "\C-e \C-u\C-y\ey\C-u"$(__tmux_search__)"\e\C-e\er"'
+  bind -m vi-command '"\C-f": "\C-z\C-f\C-z"'
+  bind -m vi-insert '"\C-f": "\C-z\C-f\C-z"'
 else
   # CTRL-T - Paste the selected file path into the command line
   bind -m emacs-standard -x '"\C-t": fzf-file-widget'
@@ -92,6 +101,11 @@ else
   bind -m emacs-standard -x '"\C-r": __fzf_history__'
   bind -m vi-command -x '"\C-r": __fzf_history__'
   bind -m vi-insert -x '"\C-r": __fzf_history__'
+
+  # CTRL-F - tmux search session/window
+  bind -m emacs-standard -x '"\C-f": __tmux_search__'
+  bind -m vi-command -x '"\C-f": __tmux_search__'
+  bind -m vi-insert -x '"\C-f": __tmux_search__'
 fi
 
 # ALT-C - cd into the selected directory
