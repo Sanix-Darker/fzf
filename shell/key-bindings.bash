@@ -69,6 +69,10 @@ __tmux_search__(){
     $HOME/.fzf/shell/tmux_search.sh
 }
 
+__path_cmd_search__(){
+    tac $PWD/.cmd_history | fzf
+}
+
 # Required to refresh the prompt after fzf
 bind -m emacs-standard '"\er": redraw-current-line'
 
@@ -91,6 +95,11 @@ if (( BASH_VERSINFO[0] < 4 )); then
   bind -m emacs-standard '"\C-f": "\C-e \C-u\C-y\ey\C-u"$(__tmux_search__)"\e\C-e\er"'
   bind -m vi-command '"\C-f": "\C-z\C-f\C-z"'
   bind -m vi-insert '"\C-f": "\C-z\C-f\C-z"'
+
+  # CTRL-H - path command line search on fzf
+  bind -m emacs-standard '"\C-h": "\C-e \C-u\C-y\ey\C-u"$(__path_cmd_search__)"\e\C-e\er"'
+  bind -m vi-command '"\C-h": "\C-z\C-f\C-z"'
+  bind -m vi-insert '"\C-h": "\C-z\C-f\C-z"'
 else
   # CTRL-T - Paste the selected file path into the command line
   bind -m emacs-standard -x '"\C-t": fzf-file-widget'
@@ -106,6 +115,11 @@ else
   bind -m emacs-standard -x '"\C-f": __tmux_search__'
   bind -m vi-command -x '"\C-f": __tmux_search__'
   bind -m vi-insert -x '"\C-f": __tmux_search__'
+
+  # CTRL-H - path command line search on fzf
+  bind -m emacs-standard -x '"\C-h": __path_cmd_search__'
+  bind -m vi-command -x '"\C-h": __path_cmd_search__'
+  bind -m vi-insert -x '"\C-h": __path_cmd_search__'
 fi
 
 # ALT-C - cd into the selected directory
