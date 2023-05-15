@@ -70,7 +70,7 @@ __tmux_search__(){
 }
 
 __path_cmd_search__(){
-    tac $PWD/.cmd_history | fzf
+    source ~/.bash_aliases && $(tac $PWD/.cmd_history | fzf --height ${FZF_TMUX_HEIGHT:-40%})
 }
 
 # Required to refresh the prompt after fzf
