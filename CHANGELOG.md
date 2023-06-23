@@ -1,6 +1,42 @@
 CHANGELOG
 =========
 
+0.42.0
+------
+- Added new info style: `--info=right`
+- Added new info style: `--info=inline-right`
+- Added new border style `thinblock` which uses symbols for legacy computing
+  [one eighth block elements](https://en.wikipedia.org/wiki/Symbols_for_Legacy_Computing)
+    - Similarly to `block`, this style is suitable when using a different
+      background color because the window is completely contained within the border.
+      ```sh
+      BAT_THEME=GitHub fzf --info=right --border=thinblock --preview-window=border-thinblock \
+          --margin=3 --scrollbar=▏▕ --preview='bat --color=always --style=numbers {}' \
+          --color=light,query:238,fg:238,bg:251,bg+:249,gutter:251,border:248,preview-bg:253
+      ```
+    - This style may not render correctly depending on the font and the
+      terminal emulator.
+
+0.41.1
+------
+- Fixed a bug where preview window is not updated when `--disabled` is set and
+  a reload is triggered by `change:reload` binding
+
+0.41.0
+------
+- Added color name `preview-border` and `preview-scrollbar`
+- Added new border style `block` which uses [block elements](https://en.wikipedia.org/wiki/Block_Elements)
+- `--scrollbar` can take two characters, one for the main window, the other
+  for the preview window
+- Putting it altogether:
+  ```sh
+  fzf-tmux -p 80% --padding 1,2 --preview 'bat --style=plain --color=always {}' \
+      --color 'bg:237,bg+:235,gutter:237,border:238,scrollbar:236' \
+      --color 'preview-bg:235,preview-border:236,preview-scrollbar:234' \
+      --preview-window 'border-block' --border block --scrollbar '▌▐'
+  ```
+- Bug fixes and improvements
+
 0.40.0
 ------
 - Added `zero` event that is triggered when there's no match

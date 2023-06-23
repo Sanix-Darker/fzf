@@ -63,7 +63,7 @@ const usage = `usage: fzf [options]
                            (default: 10)
     --layout=LAYOUT        Choose layout: [default|reverse|reverse-list]
     --border[=STYLE]       Draw border around the finder
-                           [rounded|sharp|horizontal|vertical|
+                           [rounded|sharp|bold|block|thinblock|double|horizontal|vertical|
                             top|bottom|left|right|none] (default: rounded)
     --border-label=LABEL   Label to print on the border
     --border-label-pos=COL Position of the border label
@@ -72,10 +72,11 @@ const usage = `usage: fzf [options]
                            (default: 0 or center)
     --margin=MARGIN        Screen margin (TRBL | TB,RL | T,RL,B | T,R,B,L)
     --padding=PADDING      Padding inside border (TRBL | TB,RL | T,RL,B | T,R,B,L)
-    --info=STYLE           Finder info style [default|hidden|inline|inline:SEPARATOR]
+    --info=STYLE           Finder info style
+                           [default|right|hidden|inline[:SEPARATOR]|inline-right]
     --separator=STR        String to form horizontal separator on info line
     --no-separator         Hide info line separator
-    --scrollbar[=CHAR]     Scrollbar character
+    --scrollbar[=C1[C2]]   Scrollbar character(s) (each for main and preview window)
     --no-scrollbar         Hide scrollbar
     --prompt=STR           Input prompt (default: '> ')
     --pointer=STR          Pointer to the current line (default: '>')
@@ -194,9 +195,15 @@ type infoStyle int
 
 const (
 	infoDefault infoStyle = iota
+	infoRight
 	infoInline
+	infoInlineRight
 	infoHidden
 )
+
+func (s infoStyle) noExtraLine() bool {
+	return s == infoInline || s == infoInlineRight || s == infoHidden
+}
 
 type labelOpts struct {
 	label  string
@@ -544,6 +551,10 @@ func parseBorder(str string, optional bool) tui.BorderShape {
 		return tui.BorderSharp
 	case "bold":
 		return tui.BorderBold
+	case "block":
+		return tui.BorderBlock
+	case "thinblock":
+		return tui.BorderThinBlock
 	case "double":
 		return tui.BorderDouble
 	case "horizontal":
@@ -564,7 +575,7 @@ func parseBorder(str string, optional bool) tui.BorderShape {
 		if optional && str == "" {
 			return tui.DefaultBorderShape
 		}
-		errorExit("invalid border style (expected: rounded|sharp|bold|double|horizontal|vertical|top|bottom|left|right|none)")
+		errorExit("invalid border style (expected: rounded|sharp|bold|block|thinblock|double|horizontal|vertical|top|bottom|left|right|none)")
 	}
 	return tui.BorderNone
 }
@@ -612,6 +623,8 @@ func parseKeyChordsImpl(str string, message string, exit func(string)) map[tui.E
 			add(tui.BSpace)
 		case "ctrl-space":
 			add(tui.CtrlSpace)
+		case "ctrl-delete":
+			add(tui.CtrlDelete)
 		case "ctrl-^", "ctrl-6":
 			add(tui.CtrlCaret)
 		case "ctrl-/", "ctrl-_":
@@ -682,6 +695,8 @@ func parseKeyChordsImpl(str string, message string, exit func(string)) map[tui.E
 			add(tui.SLeft)
 		case "shift-right":
 			add(tui.SRight)
+		case "shift-delete":
+			add(tui.SDelete)
 		case "left-click":
 			add(tui.LeftClick)
 		case "right-click":
@@ -888,10 +903,14 @@ func parseTheme(defaultTheme *tui.ColorTheme, str string) *tui.ColorTheme {
 				mergeAttr(&theme.CurrentMatch)
 			case "border":
 				mergeAttr(&theme.Border)
+			case "preview-border":
+				mergeAttr(&theme.PreviewBorder)
 			case "separator":
 				mergeAttr(&theme.Separator)
 			case "scrollbar":
 				mergeAttr(&theme.Scrollbar)
+			case "preview-scrollbar":
+				mergeAttr(&theme.PreviewScrollbar)
 			case "label":
 				mergeAttr(&theme.BorderLabel)
 			case "preview-label":
@@ -1364,8 +1383,12 @@ func parseInfoStyle(str string) (infoStyle, string) {
 	switch str {
 	case "default":
 		return infoDefault, ""
+	case "right":
+		return infoRight, ""
 	case "inline":
 		return infoInline, defaultInfoSep
+	case "inline-right":
+		return infoInlineRight, ""
 	case "hidden":
 		return infoHidden, ""
 	default:
@@ -1373,7 +1396,7 @@ func parseInfoStyle(str string) (infoStyle, string) {
 		if strings.HasPrefix(str, prefix) {
 			return infoInline, strings.ReplaceAll(str[len(prefix):], "\n", " ")
 		}
-		errorExit("invalid info style (expected: default|hidden|inline|inline:SEPARATOR)")
+		errorExit("invalid info style (expected: default|right|hidden|inline[:SEPARATOR]|inline-right)")
 	}
 	return infoDefault, ""
 }
@@ -1426,6 +1449,10 @@ func parsePreviewWindowImpl(opts *previewOpts, input string, exit func(string)) 
 			opts.border = tui.BorderSharp
 		case "border-bold":
 			opts.border = tui.BorderBold
+		case "border-block":
+			opts.border = tui.BorderBlock
+		case "border-thinblock":
+			opts.border = tui.BorderThinBlock
 		case "border-double":
 			opts.border = tui.BorderDouble
 		case "noborder", "border-none":
@@ -1952,8 +1979,16 @@ func postProcessOptions(opts *Options) {
 		errorExit("--height option is currently not supported on this platform")
 	}
 
-	if opts.Scrollbar != nil && runewidth.StringWidth(*opts.Scrollbar) > 1 {
-		errorExit("scrollbar display width should be 1")
+	if opts.Scrollbar != nil {
+		runes := []rune(*opts.Scrollbar)
+		if len(runes) > 2 {
+			errorExit("--scrollbar should be given one or two characters")
+		}
+		for _, r := range runes {
+			if runewidth.RuneWidth(r) != 1 {
+				errorExit("scrollbar display width should be 1")
+			}
+		}
 	}
 
 	// Default actions for CTRL-N / CTRL-P when --history is set
@@ -1969,25 +2004,25 @@ func postProcessOptions(opts *Options) {
 	// Extend the default key map
 	keymap := defaultKeymap()
 	for key, actions := range opts.Keymap {
-		var lastChangePreviewWindow *action
+		reordered := []*action{}
 		for _, act := range actions {
 			switch act.t {
 			case actToggleSort:
 				// To display "+S"/"-S" on info line
 				opts.ToggleSort = true
-			case actChangePreviewWindow:
-				lastChangePreviewWindow = act
+			case actTogglePreview, actShowPreview, actHidePreview, actChangePreviewWindow:
+				reordered = append(reordered, act)
 			}
 		}
 
-		// Re-organize actions so that we only keep the last change-preview-window
-		// and it comes first in the list.
+		// Re-organize actions so that we put actions that change the preview window first in the list.
 		//  *  change-preview-window(up,+10)+preview(sleep 3; cat {})+change-preview-window(up,+20)
-		//  -> change-preview-window(up,+20)+preview(sleep 3; cat {})
-		if lastChangePreviewWindow != nil {
-			reordered := []*action{lastChangePreviewWindow}
+		//  -> change-preview-window(up,+10)+change-preview-window(up,+20)+preview(sleep 3; cat {})
+		if len(reordered) > 0 {
 			for _, act := range actions {
-				if act.t != actChangePreviewWindow {
+				switch act.t {
+				case actTogglePreview, actShowPreview, actHidePreview, actChangePreviewWindow:
+				default:
 					reordered = append(reordered, act)
 				}
 			}

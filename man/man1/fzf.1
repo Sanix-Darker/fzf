@@ -21,7 +21,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ..
-.TH fzf 1 "Apr 2023" "fzf 0.39.0" "fzf - a command-line fuzzy finder"
+.TH fzf 1 "Jun 2023" "fzf 0.42.0" "fzf - a command-line fuzzy finder"
 
 .SH NAME
 fzf - a command-line fuzzy finder
@@ -228,6 +228,10 @@ Draw border around the finder
 .br
 .BR double "        Border with double lines"
 .br
+.BR block "         Border using block elements; suitable when using different background colors"
+.br
+.BR thinblock "     Border using legacy computing symbols; may not be displayed on some terminals"
+.br
 .BR horizontal "    Horizontal lines above and below the finder"
 .br
 .BR vertical "      Vertical lines on each side of the finder"
@@ -353,9 +357,13 @@ Determines the display style of finder info (match counters).
 .br
 .BR default "          Display on the next line to the prompt"
 .br
+.BR right "            Display on the right end of the next line to the prompt"
+.br
 .BR inline "           Display on the same line with the default separator ' < '"
 .br
 .BR inline:SEPARATOR " Display on the same line with a non-default separator"
+.br
+.BR inline-right "     Display on the right end of the same line
 .br
 .BR hidden "           Do not display finder info"
 .br
@@ -377,9 +385,10 @@ Do not display horizontal separator on the info line. A synonym for
 \fB--separator=''\fB
 
 .TP
-.BI "--scrollbar=" "CHAR"
+.BI "--scrollbar=" "CHAR1[CHAR2]"
 Use the given character to render scrollbar. (default: '│' or ':' depending on
-\fB--no-unicode\fR).
+\fB--no-unicode\fR). The optional \fBCHAR2\fR is used to render scrollbar of
+the preview window.
 
 .TP
 .B "--no-scrollbar"
@@ -433,28 +442,30 @@ color mappings.
     \fBbw      \fRNo colors (equivalent to \fB--no-color\fR)
 
 .B COLOR NAMES:
-    \fBfg              \fRText
-      \fBpreview-fg    \fRPreview window text
-    \fBbg              \fRBackground
-      \fBpreview-bg    \fRPreview window background
-    \fBhl              \fRHighlighted substrings
-    \fBfg+             \fRText (current line)
-    \fBbg+             \fRBackground (current line)
-      \fBgutter        \fRGutter on the left
-    \fBhl+             \fRHighlighted substrings (current line)
-    \fBquery           \fRQuery string
-      \fBdisabled      \fRQuery string when search is disabled (\fB--disabled\fR)
-    \fBinfo            \fRInfo line (match counters)
-    \fBborder          \fRBorder around the window (\fB--border\fR and \fB--preview\fR)
-      \fBseparator     \fRHorizontal separator on info line
-      \fBscrollbar     \fRScrollbar
-    \fBlabel           \fRBorder label (\fB--border-label\fR and \fB--preview-label\fR)
-      \fBpreview-label \fRBorder label of the preview window (\fB--preview-label\fR)
-    \fBprompt          \fRPrompt
-    \fBpointer         \fRPointer to the current line
-    \fBmarker          \fRMulti-select marker
-    \fBspinner         \fRStreaming input indicator
-    \fBheader          \fRHeader
+    \fBfg                  \fRText
+      \fBpreview-fg        \fRPreview window text
+    \fBbg                  \fRBackground
+      \fBpreview-bg        \fRPreview window background
+    \fBhl                  \fRHighlighted substrings
+    \fBfg+                 \fRText (current line)
+    \fBbg+                 \fRBackground (current line)
+      \fBgutter            \fRGutter on the left
+    \fBhl+                 \fRHighlighted substrings (current line)
+    \fBquery               \fRQuery string
+      \fBdisabled          \fRQuery string when search is disabled (\fB--disabled\fR)
+    \fBinfo                \fRInfo line (match counters)
+    \fBborder              \fRBorder around the window (\fB--border\fR and \fB--preview\fR)
+      \fBscrollbar         \fRScrollbar
+      \fBpreview-border    \fRBorder around the preview window (\fB--preview\fR)
+      \fBpreview-scrollbar \fRScrollbar
+      \fBseparator         \fRHorizontal separator on info line
+    \fBlabel               \fRBorder label (\fB--border-label\fR and \fB--preview-label\fR)
+      \fBpreview-label     \fRBorder label of the preview window (\fB--preview-label\fR)
+    \fBprompt              \fRPrompt
+    \fBpointer             \fRPointer to the current line
+    \fBmarker              \fRMulti-select marker
+    \fBspinner             \fRStreaming input indicator
+    \fBheader              \fRHeader
 
 .B ANSI COLORS:
     \fB-1         \fRDefault terminal foreground/background color
@@ -595,6 +606,10 @@ Should be used with one of the following \fB--preview-window\fR options.
 .B * border-bold
 .br
 .B * border-double
+.br
+.B * border-block
+.br
+.B * border-thinblock
 .br
 .B * border-horizontal
 .br
@@ -870,6 +885,8 @@ e.g.
 .br
 \fIctrl-space\fR
 .br
+\fIctrl-delete\fR
+.br
 \fIctrl-\\\fR
 .br
 \fIctrl-]\fR
@@ -937,6 +954,8 @@ e.g.
 \fIshift-left\fR
 .br
 \fIshift-right\fR
+.br
+\fIshift-delete\fR
 .br
 \fIalt-shift-up\fR
 .br
