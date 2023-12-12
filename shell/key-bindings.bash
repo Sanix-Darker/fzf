@@ -106,7 +106,7 @@ __tmux_search__(){
 __path_cmd_search__(){
     source ~/.bash_aliases && \
         CMD_TO_BE_EXECUTED="$(tac $PWD/.cmd_history | fzf --height ${FZF_TMUX_HEIGHT:-40%})" && \
-        echo $CMD_TO_BE_EXECUTED && eval $CMD_TO_BE_EXECUTED
+        echo $CMD_TO_BE_EXECUTED && $CMD_TO_BE_EXECUTED
 }
 
 # Required to refresh the prompt after fzf
