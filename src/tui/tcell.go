@@ -10,7 +10,6 @@ import (
 	"github.com/gdamore/tcell/v2/encoding"
 	"github.com/junegunn/fzf/src/util"
 
-	"github.com/mattn/go-runewidth"
 	"github.com/rivo/uniseg"
 )
 
@@ -98,6 +97,11 @@ const (
 	AttrClear     = Attr(1 << 8)
 )
 
+func (r *FullscreenRenderer) PassThrough(str string) {
+	// No-op
+	// https://github.com/gdamore/tcell/pull/650#issuecomment-1806442846
+}
+
 func (r *FullscreenRenderer) Resize(maxHeightFunc func(int) int) {}
 
 func (r *FullscreenRenderer) defaultTheme() *ColorTheme {
@@ -139,6 +143,7 @@ func (a Attr) Merge(b Attr) Attr {
 var (
 	_screen          tcell.Screen
 	_prevMouseButton tcell.ButtonMask
+	_initialResize   bool = true
 )
 
 func (r *FullscreenRenderer) initScreen() {
@@ -165,6 +170,10 @@ func (r *FullscreenRenderer) Init() {
 
 	r.initScreen()
 	initTheme(r.theme, r.defaultTheme(), r.forceBlack)
+}
+
+func (r *FullscreenRenderer) Top() int {
+	return 0
 }
 
 func (r *FullscreenRenderer) MaxX() int {
@@ -194,14 +203,30 @@ func (r *FullscreenRenderer) NeedScrollbarRedraw() bool {
 	return true
 }
 
+func (r *FullscreenRenderer) ShouldEmitResizeEvent() bool {
+	return true
+}
+
 func (r *FullscreenRenderer) Refresh() {
 	// noop
+}
+
+// TODO: Pixel width and height not implemented
+func (r *FullscreenRenderer) Size() TermSize {
+	cols, lines := _screen.Size()
+	return TermSize{lines, cols, 0, 0}
 }
 
 func (r *FullscreenRenderer) GetChar() Event {
 	ev := _screen.PollEvent()
 	switch ev := ev.(type) {
 	case *tcell.EventResize:
+		// Ignore the first resize event
+		// https://github.com/gdamore/tcell/blob/v2.7.0/TUTORIAL.md?plain=1#L18
+		if _initialResize {
+			_initialResize = false
+			return Event{Invalid, 0, nil}
+		}
 		return Event{Resize, 0, nil}
 
 	// process mouse events:
@@ -536,7 +561,13 @@ func fill(x, y, w, h int, n ColorPair, r rune) {
 }
 
 func (w *TcellWindow) Erase() {
+	w.drawBorder(false)
 	fill(w.left-1, w.top, w.width+1, w.height-1, w.normal, ' ')
+}
+
+func (w *TcellWindow) EraseMaybe() bool {
+	w.Erase()
+	return true
 }
 
 func (w *TcellWindow) Enclose(y int, x int) bool {
@@ -687,6 +718,10 @@ func (w *TcellWindow) CFill(fg Color, bg Color, a Attr, str string) FillReturn {
 	return w.fillString(str, NewColorPair(fg, bg, a))
 }
 
+func (w *TcellWindow) DrawBorder() {
+	w.drawBorder(false)
+}
+
 func (w *TcellWindow) DrawHBorder() {
 	w.drawBorder(true)
 }
@@ -713,7 +748,7 @@ func (w *TcellWindow) drawBorder(onlyHorizontal bool) {
 		style = w.normal.style()
 	}
 
-	hw := runewidth.RuneWidth(w.borderStyle.top)
+	hw := runeWidth(w.borderStyle.top)
 	switch shape {
 	case BorderRounded, BorderSharp, BorderBold, BorderBlock, BorderThinBlock, BorderDouble, BorderHorizontal, BorderTop:
 		max := right - 2*hw
@@ -748,7 +783,7 @@ func (w *TcellWindow) drawBorder(onlyHorizontal bool) {
 		}
 		switch shape {
 		case BorderRounded, BorderSharp, BorderBold, BorderBlock, BorderThinBlock, BorderDouble, BorderVertical, BorderRight:
-			vw := runewidth.RuneWidth(w.borderStyle.right)
+			vw := runeWidth(w.borderStyle.right)
 			for y := top; y < bot; y++ {
 				_screen.SetContent(right-vw, y, w.borderStyle.right, nil, style)
 			}
@@ -757,8 +792,8 @@ func (w *TcellWindow) drawBorder(onlyHorizontal bool) {
 	switch shape {
 	case BorderRounded, BorderSharp, BorderBold, BorderBlock, BorderThinBlock, BorderDouble:
 		_screen.SetContent(left, top, w.borderStyle.topLeft, nil, style)
-		_screen.SetContent(right-runewidth.RuneWidth(w.borderStyle.topRight), top, w.borderStyle.topRight, nil, style)
+		_screen.SetContent(right-runeWidth(w.borderStyle.topRight), top, w.borderStyle.topRight, nil, style)
 		_screen.SetContent(left, bot-1, w.borderStyle.bottomLeft, nil, style)
-		_screen.SetContent(right-runewidth.RuneWidth(w.borderStyle.bottomRight), bot-1, w.borderStyle.bottomRight, nil, style)
+		_screen.SetContent(right-runeWidth(w.borderStyle.bottomRight), bot-1, w.borderStyle.bottomRight, nil, style)
 	}
 }

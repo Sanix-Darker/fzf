@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/rivo/uniseg"
 )
 
 // Types of user action
@@ -55,6 +57,14 @@ const (
 	DoubleClick
 	LeftClick
 	RightClick
+	SLeftClick
+	SRightClick
+	ScrollUp
+	ScrollDown
+	SScrollUp
+	SScrollDown
+	PreviewScrollUp
+	PreviewScrollDown
 
 	BTab
 	BSpace
@@ -97,6 +107,7 @@ const (
 	Focus
 	One
 	Zero
+	Result
 
 	AltBS
 
@@ -465,6 +476,13 @@ func MakeTransparentBorder() BorderStyle {
 		bottomRight: ' '}
 }
 
+type TermSize struct {
+	Lines    int
+	Columns  int
+	PxWidth  int
+	PxHeight int
+}
+
 type Renderer interface {
 	Init()
 	Resize(maxHeightFunc func(int) int)
@@ -474,12 +492,17 @@ type Renderer interface {
 	RefreshWindows(windows []Window)
 	Refresh()
 	Close()
+	PassThrough(string)
 	NeedScrollbarRedraw() bool
+	ShouldEmitResizeEvent() bool
 
 	GetChar() Event
 
+	Top() int
 	MaxX() int
 	MaxY() int
+
+	Size() TermSize
 
 	NewWindow(top int, left int, width int, height int, preview bool, borderStyle BorderStyle) Window
 }
@@ -490,6 +513,7 @@ type Window interface {
 	Width() int
 	Height() int
 
+	DrawBorder()
 	DrawHBorder()
 	Refresh()
 	FinishFill()
@@ -506,6 +530,7 @@ type Window interface {
 	Fill(text string) FillReturn
 	CFill(fg Color, bg Color, attr Attr, text string) FillReturn
 	Erase()
+	EraseMaybe() bool
 }
 
 type FullscreenRenderer struct {
@@ -789,4 +814,8 @@ func initPalette(theme *ColorTheme) {
 	ColPreviewBorder = pair(theme.PreviewBorder, theme.PreviewBg)
 	ColPreviewScrollbar = pair(theme.PreviewScrollbar, theme.PreviewBg)
 	ColPreviewSpinner = pair(theme.Spinner, theme.PreviewBg)
+}
+
+func runeWidth(r rune) int {
+	return uniseg.StringWidth(string(r))
 }
