@@ -12,8 +12,8 @@ import (
 	"github.com/junegunn/fzf/src/tui"
 	"github.com/junegunn/fzf/src/util"
 
-	"github.com/mattn/go-runewidth"
 	"github.com/mattn/go-shellwords"
+	"github.com/rivo/uniseg"
 )
 
 const usage = `usage: fzf [options]
@@ -57,13 +57,15 @@ const usage = `usage: fzf [options]
   Layout
     --height=[~]HEIGHT[%]  Display fzf window below the cursor with the given
                            height instead of using fullscreen.
+                           A negative value is calcalated as the terminal height
+                           minus the given value.
                            If prefixed with '~', fzf will determine the height
                            according to the input size.
     --min-height=HEIGHT    Minimum height when --height is given in percent
                            (default: 10)
     --layout=LAYOUT        Choose layout: [default|reverse|reverse-list]
     --border[=STYLE]       Draw border around the finder
-                           [rounded|sharp|horizontal|vertical|
+                           [rounded|sharp|bold|block|thinblock|double|horizontal|vertical|
                             top|bottom|left|right|none] (default: rounded)
     --border-label=LABEL   Label to print on the border
     --border-label-pos=COL Position of the border label
@@ -72,10 +74,11 @@ const usage = `usage: fzf [options]
                            (default: 0 or center)
     --margin=MARGIN        Screen margin (TRBL | TB,RL | T,RL,B | T,R,B,L)
     --padding=PADDING      Padding inside border (TRBL | TB,RL | T,RL,B | T,R,B,L)
-    --info=STYLE           Finder info style [default|hidden|inline|inline:SEPARATOR]
+    --info=STYLE           Finder info style
+                           [default|right|hidden|inline[:SEPARATOR]|inline-right]
     --separator=STR        String to form horizontal separator on info line
     --no-separator         Hide info line separator
-    --scrollbar[=CHAR]     Scrollbar character
+    --scrollbar[=C1[C2]]   Scrollbar character(s) (each for main and preview window)
     --no-scrollbar         Hide scrollbar
     --prompt=STR           Input prompt (default: '> ')
     --pointer=STR          Pointer to the current line (default: '>')
@@ -117,13 +120,15 @@ const usage = `usage: fzf [options]
     --read0                Read input delimited by ASCII NUL characters
     --print0               Print output delimited by ASCII NUL characters
     --sync                 Synchronous search for multi-staged filtering
-    --listen[=HTTP_PORT]   Start HTTP server to receive actions (POST /)
+    --listen[=[ADDR:]PORT] Start HTTP server to receive actions (POST /)
+                           (To allow remote process execution, use --listen-unsafe)
     --version              Display version information and exit
 
   Environment variables
     FZF_DEFAULT_COMMAND    Default command to use when input is tty
-    FZF_DEFAULT_OPTS       Default options
-                           (e.g. '--layout=reverse --inline-info')
+    FZF_DEFAULT_OPTS       Default options (e.g. '--layout=reverse --info=inline')
+    FZF_DEFAULT_OPTS_FILE  Location of the file to read default options from
+    FZF_API_KEY            X-API-Key header for HTTP server (--listen)
 
 `
 
@@ -154,6 +159,7 @@ type heightSpec struct {
 	size    float64
 	percent bool
 	auto    bool
+	inverse bool
 }
 
 type sizeSpec struct {
@@ -194,9 +200,15 @@ type infoStyle int
 
 const (
 	infoDefault infoStyle = iota
+	infoRight
 	infoInline
+	infoInlineRight
 	infoHidden
 )
+
+func (s infoStyle) noExtraLine() bool {
+	return s == infoInline || s == infoInlineRight || s == infoHidden
+}
 
 type labelOpts struct {
 	label  string
@@ -325,8 +337,10 @@ type Options struct {
 	BorderLabel  labelOpts
 	PreviewLabel labelOpts
 	Unicode      bool
+	Ambidouble   bool
 	Tabstop      int
-	ListenPort   *int
+	ListenAddr   *listenAddress
+	Unsafe       bool
 	ClearOnExit  bool
 	Version      bool
 }
@@ -393,9 +407,11 @@ func defaultOptions() *Options {
 		Margin:       defaultMargin(),
 		Padding:      defaultMargin(),
 		Unicode:      true,
+		Ambidouble:   os.Getenv("RUNEWIDTH_EASTASIAN") == "1",
 		Tabstop:      8,
 		BorderLabel:  labelOpts{},
 		PreviewLabel: labelOpts{},
+		Unsafe:       false,
 		ClearOnExit:  true,
 		Version:      false}
 }
@@ -405,8 +421,10 @@ func help(code int) {
 	os.Exit(code)
 }
 
+var errorContext = ""
+
 func errorExit(msg string) {
-	os.Stderr.WriteString(msg + "\n")
+	os.Stderr.WriteString(errorContext + msg + "\n")
 	os.Exit(exitError)
 }
 
@@ -544,6 +562,10 @@ func parseBorder(str string, optional bool) tui.BorderShape {
 		return tui.BorderSharp
 	case "bold":
 		return tui.BorderBold
+	case "block":
+		return tui.BorderBlock
+	case "thinblock":
+		return tui.BorderThinBlock
 	case "double":
 		return tui.BorderDouble
 	case "horizontal":
@@ -564,7 +586,7 @@ func parseBorder(str string, optional bool) tui.BorderShape {
 		if optional && str == "" {
 			return tui.DefaultBorderShape
 		}
-		errorExit("invalid border style (expected: rounded|sharp|bold|double|horizontal|vertical|top|bottom|left|right|none)")
+		errorExit("invalid border style (expected: rounded|sharp|bold|block|thinblock|double|horizontal|vertical|top|bottom|left|right|none)")
 	}
 	return tui.BorderNone
 }
@@ -612,6 +634,8 @@ func parseKeyChordsImpl(str string, message string, exit func(string)) map[tui.E
 			add(tui.BSpace)
 		case "ctrl-space":
 			add(tui.CtrlSpace)
+		case "ctrl-delete":
+			add(tui.CtrlDelete)
 		case "ctrl-^", "ctrl-6":
 			add(tui.CtrlCaret)
 		case "ctrl-/", "ctrl-_":
@@ -630,6 +654,10 @@ func parseKeyChordsImpl(str string, message string, exit func(string)) map[tui.E
 			add(tui.Load)
 		case "focus":
 			add(tui.Focus)
+		case "result":
+			add(tui.Result)
+		case "resize":
+			add(tui.Resize)
 		case "one":
 			add(tui.One)
 		case "zero":
@@ -682,12 +710,30 @@ func parseKeyChordsImpl(str string, message string, exit func(string)) map[tui.E
 			add(tui.SLeft)
 		case "shift-right":
 			add(tui.SRight)
+		case "shift-delete":
+			add(tui.SDelete)
 		case "left-click":
 			add(tui.LeftClick)
 		case "right-click":
 			add(tui.RightClick)
+		case "shift-left-click":
+			add(tui.SLeftClick)
+		case "shift-right-click":
+			add(tui.SRightClick)
 		case "double-click":
 			add(tui.DoubleClick)
+		case "scroll-up":
+			add(tui.ScrollUp)
+		case "scroll-down":
+			add(tui.ScrollDown)
+		case "shift-scroll-up":
+			add(tui.SScrollUp)
+		case "shift-scroll-down":
+			add(tui.SScrollDown)
+		case "preview-scroll-up":
+			add(tui.PreviewScrollUp)
+		case "preview-scroll-down":
+			add(tui.PreviewScrollDown)
 		case "f10":
 			add(tui.F10)
 		case "f11":
@@ -888,10 +934,14 @@ func parseTheme(defaultTheme *tui.ColorTheme, str string) *tui.ColorTheme {
 				mergeAttr(&theme.CurrentMatch)
 			case "border":
 				mergeAttr(&theme.Border)
+			case "preview-border":
+				mergeAttr(&theme.PreviewBorder)
 			case "separator":
 				mergeAttr(&theme.Separator)
 			case "scrollbar":
 				mergeAttr(&theme.Scrollbar)
+			case "preview-scrollbar":
+				mergeAttr(&theme.PreviewScrollbar)
 			case "label":
 				mergeAttr(&theme.BorderLabel)
 			case "preview-label":
@@ -937,7 +987,7 @@ const (
 
 func init() {
 	executeRegexp = regexp.MustCompile(
-		`(?si)[:+](become|execute(?:-multi|-silent)?|reload(?:-sync)?|preview|(?:change|transform)-(?:header|query|prompt|border-label|preview-label)|change-preview-window|change-preview|(?:re|un)bind|pos|put)`)
+		`(?si)[:+](become|execute(?:-multi|-silent)?|reload(?:-sync)?|preview|(?:change|transform)-(?:header|query|prompt|border-label|preview-label)|transform|change-preview-window|change-preview|(?:re|un)bind|pos|put)`)
 	splitRegexp = regexp.MustCompile("[,:]+")
 	actionNameRegexp = regexp.MustCompile("(?i)^[a-z-]+")
 }
@@ -1031,6 +1081,8 @@ func parseActionList(masked string, original string, prevActions []*action, putA
 			appendAction(actAccept)
 		case "accept-non-empty":
 			appendAction(actAcceptNonEmpty)
+		case "accept-or-print-query":
+			appendAction(actAcceptOrPrintQuery)
 		case "print-query":
 			appendAction(actPrintQuery)
 		case "refresh-preview":
@@ -1042,7 +1094,7 @@ func parseActionList(masked string, original string, prevActions []*action, putA
 		case "backward-delete-char":
 			appendAction(actBackwardDeleteChar)
 		case "backward-delete-char/eof":
-			appendAction(actBackwardDeleteCharEOF)
+			appendAction(actBackwardDeleteCharEof)
 		case "backward-word":
 			appendAction(actBackwardWord)
 		case "clear-screen":
@@ -1050,7 +1102,7 @@ func parseActionList(masked string, original string, prevActions []*action, putA
 		case "delete-char":
 			appendAction(actDeleteChar)
 		case "delete-char/eof":
-			appendAction(actDeleteCharEOF)
+			appendAction(actDeleteCharEof)
 		case "deselect":
 			appendAction(actDeselect)
 		case "end-of-line":
@@ -1095,6 +1147,12 @@ func parseActionList(masked string, original string, prevActions []*action, putA
 			appendAction(actToggleSearch)
 		case "toggle-track":
 			appendAction(actToggleTrack)
+		case "toggle-header":
+			appendAction(actToggleHeader)
+		case "show-header":
+			appendAction(actShowHeader)
+		case "hide-header":
+			appendAction(actHideHeader)
 		case "track":
 			appendAction(actTrack)
 		case "select":
@@ -1141,6 +1199,10 @@ func parseActionList(masked string, original string, prevActions []*action, putA
 			appendAction(actTogglePreviewWrap)
 		case "toggle-sort":
 			appendAction(actToggleSort)
+		case "offset-up":
+			appendAction(actOffsetUp)
+		case "offset-down":
+			appendAction(actOffsetDown)
 		case "preview-top":
 			appendAction(actPreviewTop)
 		case "preview-bottom":
@@ -1163,7 +1225,7 @@ func parseActionList(masked string, original string, prevActions []*action, putA
 			appendAction(actDisableSearch)
 		case "put":
 			if putAllowed {
-				appendAction(actRune)
+				appendAction(actChar)
 			} else {
 				exit("unable to put non-printable character")
 			}
@@ -1283,6 +1345,8 @@ func isExecuteAction(str string) actionType {
 		return actExecuteMulti
 	case "put":
 		return actPut
+	case "transform":
+		return actTransform
 	case "transform-border-label":
 		return actTransformBorderLabel
 	case "transform-preview-label":
@@ -1339,6 +1403,13 @@ func parseHeight(str string) heightSpec {
 		heightSpec.auto = true
 		str = str[1:]
 	}
+	if strings.HasPrefix(str, "-") {
+		if heightSpec.auto {
+			errorExit("negative(-) height is not compatible with adaptive(~) height")
+		}
+		heightSpec.inverse = true
+		str = str[1:]
+	}
 
 	size := parseSize(str, 100, "height")
 	heightSpec.size = size.size
@@ -1364,8 +1435,12 @@ func parseInfoStyle(str string) (infoStyle, string) {
 	switch str {
 	case "default":
 		return infoDefault, ""
+	case "right":
+		return infoRight, ""
 	case "inline":
 		return infoInline, defaultInfoSep
+	case "inline-right":
+		return infoInlineRight, ""
 	case "hidden":
 		return infoHidden, ""
 	default:
@@ -1373,7 +1448,7 @@ func parseInfoStyle(str string) (infoStyle, string) {
 		if strings.HasPrefix(str, prefix) {
 			return infoInline, strings.ReplaceAll(str[len(prefix):], "\n", " ")
 		}
-		errorExit("invalid info style (expected: default|hidden|inline|inline:SEPARATOR)")
+		errorExit("invalid info style (expected: default|right|hidden|inline[:SEPARATOR]|inline-right)")
 	}
 	return infoDefault, ""
 }
@@ -1426,6 +1501,10 @@ func parsePreviewWindowImpl(opts *previewOpts, input string, exit func(string)) 
 			opts.border = tui.BorderSharp
 		case "border-bold":
 			opts.border = tui.BorderBold
+		case "border-block":
+			opts.border = tui.BorderBlock
+		case "border-thinblock":
+			opts.border = tui.BorderThinBlock
 		case "border-double":
 			opts.border = tui.BorderDouble
 		case "noborder", "border-none":
@@ -1520,8 +1599,6 @@ func parseOptions(opts *Options, allArgs []string) {
 		}
 	}
 	validateJumpLabels := false
-	validatePointer := false
-	validateMarker := false
 	for i := 0; i < len(allArgs); i++ {
 		arg := allArgs[i]
 		switch arg {
@@ -1701,10 +1778,8 @@ func parseOptions(opts *Options, allArgs []string) {
 			opts.Prompt = nextString(allArgs, &i, "prompt string required")
 		case "--pointer":
 			opts.Pointer = firstLine(nextString(allArgs, &i, "pointer sign string required"))
-			validatePointer = true
 		case "--marker":
 			opts.Marker = firstLine(nextString(allArgs, &i, "selected sign string required"))
-			validateMarker = true
 		case "--sync":
 			opts.Sync = true
 		case "--no-sync":
@@ -1772,6 +1847,10 @@ func parseOptions(opts *Options, allArgs []string) {
 			opts.Unicode = false
 		case "--unicode":
 			opts.Unicode = true
+		case "--ambidouble":
+			opts.Ambidouble = true
+		case "--no-ambidouble":
+			opts.Ambidouble = false
 		case "--margin":
 			opts.Margin = parseMargin(
 				"margin",
@@ -1782,11 +1861,21 @@ func parseOptions(opts *Options, allArgs []string) {
 				nextString(allArgs, &i, "padding required (TRBL / TB,RL / T,RL,B / T,R,B,L)"))
 		case "--tabstop":
 			opts.Tabstop = nextInt(allArgs, &i, "tab stop required")
-		case "--listen":
-			port := optionalNumeric(allArgs, &i, 0)
-			opts.ListenPort = &port
-		case "--no-listen":
-			opts.ListenPort = nil
+		case "--listen", "--listen-unsafe":
+			given, str := optionalNextString(allArgs, &i)
+			addr := defaultListenAddr
+			if given {
+				var err error
+				err, addr = parseListenAddress(str)
+				if err != nil {
+					errorExit(err.Error())
+				}
+			}
+			opts.ListenAddr = &addr
+			opts.Unsafe = arg == "--listen-unsafe"
+		case "--no-listen", "--no-listen-unsafe":
+			opts.ListenAddr = nil
+			opts.Unsafe = false
 		case "--clear":
 			opts.ClearOnExit = true
 		case "--no-clear":
@@ -1820,10 +1909,8 @@ func parseOptions(opts *Options, allArgs []string) {
 				opts.Prompt = value
 			} else if match, value := optString(arg, "--pointer="); match {
 				opts.Pointer = firstLine(value)
-				validatePointer = true
 			} else if match, value := optString(arg, "--marker="); match {
 				opts.Marker = firstLine(value)
-				validateMarker = true
 			} else if match, value := optString(arg, "-n", "--nth="); match {
 				opts.Nth = splitNth(value)
 			} else if match, value := optString(arg, "--with-nth="); match {
@@ -1877,8 +1964,19 @@ func parseOptions(opts *Options, allArgs []string) {
 			} else if match, value := optString(arg, "--tabstop="); match {
 				opts.Tabstop = atoi(value)
 			} else if match, value := optString(arg, "--listen="); match {
-				port := atoi(value)
-				opts.ListenPort = &port
+				err, addr := parseListenAddress(value)
+				if err != nil {
+					errorExit(err.Error())
+				}
+				opts.ListenAddr = &addr
+				opts.Unsafe = false
+			} else if match, value := optString(arg, "--listen-unsafe="); match {
+				err, addr := parseListenAddress(value)
+				if err != nil {
+					errorExit(err.Error())
+				}
+				opts.ListenAddr = &addr
+				opts.Unsafe = true
 			} else if match, value := optString(arg, "--hscroll-off="); match {
 				opts.HscrollOff = atoi(value)
 			} else if match, value := optString(arg, "--scroll-off="); match {
@@ -1908,10 +2006,6 @@ func parseOptions(opts *Options, allArgs []string) {
 		errorExit("tab stop must be a positive integer")
 	}
 
-	if opts.ListenPort != nil && (*opts.ListenPort < 0 || *opts.ListenPort > 65535) {
-		errorExit("invalid listen port")
-	}
-
 	if len(opts.JumpLabels) == 0 {
 		errorExit("empty jump labels")
 	}
@@ -1923,37 +2017,45 @@ func parseOptions(opts *Options, allArgs []string) {
 			}
 		}
 	}
-
-	if validatePointer {
-		if err := validateSign(opts.Pointer, "pointer"); err != nil {
-			errorExit(err.Error())
-		}
-	}
-
-	if validateMarker {
-		if err := validateSign(opts.Marker, "marker"); err != nil {
-			errorExit(err.Error())
-		}
-	}
 }
 
 func validateSign(sign string, signOptName string) error {
 	if sign == "" {
 		return fmt.Errorf("%v cannot be empty", signOptName)
 	}
-	if runewidth.StringWidth(sign) > 2 {
+	if uniseg.StringWidth(sign) > 2 {
 		return fmt.Errorf("%v display width should be up to 2", signOptName)
 	}
 	return nil
 }
 
 func postProcessOptions(opts *Options) {
+	if opts.Ambidouble {
+		uniseg.EastAsianAmbiguousWidth = 2
+	}
+
+	if err := validateSign(opts.Pointer, "pointer"); err != nil {
+		errorExit(err.Error())
+	}
+
+	if err := validateSign(opts.Marker, "marker"); err != nil {
+		errorExit(err.Error())
+	}
+
 	if !opts.Version && !tui.IsLightRendererSupported() && opts.Height.size > 0 {
 		errorExit("--height option is currently not supported on this platform")
 	}
 
-	if opts.Scrollbar != nil && runewidth.StringWidth(*opts.Scrollbar) > 1 {
-		errorExit("scrollbar display width should be 1")
+	if opts.Scrollbar != nil {
+		runes := []rune(*opts.Scrollbar)
+		if len(runes) > 2 {
+			errorExit("--scrollbar should be given one or two characters")
+		}
+		for _, r := range runes {
+			if uniseg.StringWidth(string(r)) != 1 {
+				errorExit("scrollbar display width should be 1")
+			}
+		}
 	}
 
 	// Default actions for CTRL-N / CTRL-P when --history is set
@@ -1969,25 +2071,25 @@ func postProcessOptions(opts *Options) {
 	// Extend the default key map
 	keymap := defaultKeymap()
 	for key, actions := range opts.Keymap {
-		var lastChangePreviewWindow *action
+		reordered := []*action{}
 		for _, act := range actions {
 			switch act.t {
 			case actToggleSort:
 				// To display "+S"/"-S" on info line
 				opts.ToggleSort = true
-			case actChangePreviewWindow:
-				lastChangePreviewWindow = act
+			case actTogglePreview, actShowPreview, actHidePreview, actChangePreviewWindow:
+				reordered = append(reordered, act)
 			}
 		}
 
-		// Re-organize actions so that we only keep the last change-preview-window
-		// and it comes first in the list.
+		// Re-organize actions so that we put actions that change the preview window first in the list.
 		//  *  change-preview-window(up,+10)+preview(sleep 3; cat {})+change-preview-window(up,+20)
-		//  -> change-preview-window(up,+20)+preview(sleep 3; cat {})
-		if lastChangePreviewWindow != nil {
-			reordered := []*action{lastChangePreviewWindow}
+		//  -> change-preview-window(up,+10)+change-preview-window(up,+20)+preview(sleep 3; cat {})
+		if len(reordered) > 0 {
 			for _, act := range actions {
-				if act.t != actChangePreviewWindow {
+				switch act.t {
+				case actTogglePreview, actShowPreview, actHidePreview, actChangePreviewWindow:
+				default:
 					reordered = append(reordered, act)
 				}
 			}
@@ -2067,13 +2169,36 @@ func ParseOptions() *Options {
 		}
 	}
 
-	// Options from Env var
-	words, _ := shellwords.Parse(os.Getenv("FZF_DEFAULT_OPTS"))
+	// 1. Options from $FZF_DEFAULT_OPTS_FILE
+	if path := os.Getenv("FZF_DEFAULT_OPTS_FILE"); path != "" {
+		bytes, err := os.ReadFile(path)
+		if err != nil {
+			errorContext = "$FZF_DEFAULT_OPTS_FILE: "
+			errorExit(err.Error())
+		}
+
+		words, parseErr := shellwords.Parse(string(bytes))
+		if parseErr != nil {
+			errorContext = path + ": "
+			errorExit(parseErr.Error())
+		}
+		if len(words) > 0 {
+			parseOptions(opts, words)
+		}
+	}
+
+	// 2. Options from $FZF_DEFAULT_OPTS string
+	words, parseErr := shellwords.Parse(os.Getenv("FZF_DEFAULT_OPTS"))
+	errorContext = "$FZF_DEFAULT_OPTS: "
+	if parseErr != nil {
+		errorExit(parseErr.Error())
+	}
 	if len(words) > 0 {
 		parseOptions(opts, words)
 	}
 
-	// Options from command-line arguments
+	// 3. Options from command-line arguments
+	errorContext = ""
 	parseOptions(opts, os.Args[1:])
 
 	postProcessOptions(opts)

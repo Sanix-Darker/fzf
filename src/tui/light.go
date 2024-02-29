@@ -10,7 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mattn/go-runewidth"
 	"github.com/rivo/uniseg"
 
 	"golang.org/x/term"
@@ -30,6 +29,10 @@ const consoleDevice string = "/dev/tty"
 
 var offsetRegexp *regexp.Regexp = regexp.MustCompile("(.*)\x1b\\[([0-9]+);([0-9]+)R")
 var offsetRegexpBegin *regexp.Regexp = regexp.MustCompile("^\x1b\\[[0-9]+;[0-9]+R")
+
+func (r *LightRenderer) PassThrough(str string) {
+	r.queued.WriteString("\x1b7" + str + "\x1b8")
+}
 
 func (r *LightRenderer) stderr(str string) {
 	r.stderrInternal(str, true, "")
@@ -398,7 +401,7 @@ func (r *LightRenderer) escSequence(sz *int) Event {
 			return Event{F3, 0, nil}
 		case 'S':
 			return Event{F4, 0, nil}
-		case '1', '2', '3', '4', '5', '6':
+		case '1', '2', '3', '4', '5', '6', '7', '8':
 			if len(r.buffer) < 4 {
 				return Event{Invalid, 0, nil}
 			}
@@ -430,13 +433,29 @@ func (r *LightRenderer) escSequence(sz *int) Event {
 				}
 				return Event{Invalid, 0, nil} // INS
 			case '3':
-				return Event{Del, 0, nil}
+				if r.buffer[3] == '~' {
+					return Event{Del, 0, nil}
+				}
+				if len(r.buffer) == 6 && r.buffer[5] == '~' {
+					*sz = 6
+					switch r.buffer[4] {
+					case '5':
+						return Event{CtrlDelete, 0, nil}
+					case '2':
+						return Event{SDelete, 0, nil}
+					}
+				}
+				return Event{Invalid, 0, nil}
 			case '4':
 				return Event{End, 0, nil}
 			case '5':
 				return Event{PgUp, 0, nil}
 			case '6':
 				return Event{PgDn, 0, nil}
+			case '7':
+				return Event{Home, 0, nil}
+			case '8':
+				return Event{End, 0, nil}
 			case '1':
 				switch r.buffer[3] {
 				case '~':
@@ -675,6 +694,10 @@ func (r *LightRenderer) NeedScrollbarRedraw() bool {
 	return false
 }
 
+func (r *LightRenderer) ShouldEmitResizeEvent() bool {
+	return false
+}
+
 func (r *LightRenderer) RefreshWindows(windows []Window) {
 	r.flush()
 }
@@ -702,6 +725,10 @@ func (r *LightRenderer) Close() {
 	r.flush()
 	r.closePlatform()
 	r.restoreTerminal()
+}
+
+func (r *LightRenderer) Top() int {
+	return r.yoffset
 }
 
 func (r *LightRenderer) MaxX() int {
@@ -739,13 +766,17 @@ func (r *LightRenderer) NewWindow(top int, left int, width int, height int, prev
 	return w
 }
 
+func (w *LightWindow) DrawBorder() {
+	w.drawBorder(false)
+}
+
 func (w *LightWindow) DrawHBorder() {
 	w.drawBorder(true)
 }
 
 func (w *LightWindow) drawBorder(onlyHorizontal bool) {
 	switch w.border.shape {
-	case BorderRounded, BorderSharp, BorderBold, BorderDouble:
+	case BorderRounded, BorderSharp, BorderBold, BorderBlock, BorderThinBlock, BorderDouble:
 		w.drawBorderAround(onlyHorizontal)
 	case BorderHorizontal:
 		w.drawBorderHorizontal(true, true)
@@ -776,14 +807,14 @@ func (w *LightWindow) drawBorderHorizontal(top, bottom bool) {
 	if w.preview {
 		color = ColPreviewBorder
 	}
-	hw := runewidth.RuneWidth(w.border.horizontal)
+	hw := runeWidth(w.border.top)
 	if top {
 		w.Move(0, 0)
-		w.CPrint(color, repeat(w.border.horizontal, w.width/hw))
+		w.CPrint(color, repeat(w.border.top, w.width/hw))
 	}
 	if bottom {
 		w.Move(w.height-1, 0)
-		w.CPrint(color, repeat(w.border.horizontal, w.width/hw))
+		w.CPrint(color, repeat(w.border.bottom, w.width/hw))
 	}
 }
 
@@ -799,11 +830,11 @@ func (w *LightWindow) drawBorderVertical(left, right bool) {
 	for y := 0; y < w.height; y++ {
 		w.Move(y, 0)
 		if left {
-			w.CPrint(color, string(w.border.vertical))
+			w.CPrint(color, string(w.border.left))
 		}
 		w.CPrint(color, repeat(' ', width))
 		if right {
-			w.CPrint(color, string(w.border.vertical))
+			w.CPrint(color, string(w.border.right))
 		}
 	}
 }
@@ -814,23 +845,23 @@ func (w *LightWindow) drawBorderAround(onlyHorizontal bool) {
 	if w.preview {
 		color = ColPreviewBorder
 	}
-	hw := runewidth.RuneWidth(w.border.horizontal)
-	tcw := runewidth.RuneWidth(w.border.topLeft) + runewidth.RuneWidth(w.border.topRight)
-	bcw := runewidth.RuneWidth(w.border.bottomLeft) + runewidth.RuneWidth(w.border.bottomRight)
+	hw := runeWidth(w.border.top)
+	tcw := runeWidth(w.border.topLeft) + runeWidth(w.border.topRight)
+	bcw := runeWidth(w.border.bottomLeft) + runeWidth(w.border.bottomRight)
 	rem := (w.width - tcw) % hw
-	w.CPrint(color, string(w.border.topLeft)+repeat(w.border.horizontal, (w.width-tcw)/hw)+repeat(' ', rem)+string(w.border.topRight))
+	w.CPrint(color, string(w.border.topLeft)+repeat(w.border.top, (w.width-tcw)/hw)+repeat(' ', rem)+string(w.border.topRight))
 	if !onlyHorizontal {
-		vw := runewidth.RuneWidth(w.border.vertical)
+		vw := runeWidth(w.border.left)
 		for y := 1; y < w.height-1; y++ {
 			w.Move(y, 0)
-			w.CPrint(color, string(w.border.vertical))
+			w.CPrint(color, string(w.border.left))
 			w.CPrint(color, repeat(' ', w.width-vw*2))
-			w.CPrint(color, string(w.border.vertical))
+			w.CPrint(color, string(w.border.right))
 		}
 	}
 	w.Move(w.height-1, 0)
 	rem = (w.width - bcw) % hw
-	w.CPrint(color, string(w.border.bottomLeft)+repeat(w.border.horizontal, (w.width-bcw)/hw)+repeat(' ', rem)+string(w.border.bottomRight))
+	w.CPrint(color, string(w.border.bottomLeft)+repeat(w.border.bottom, (w.width-bcw)/hw)+repeat(' ', rem)+string(w.border.bottomRight))
 }
 
 func (w *LightWindow) csi(code string) string {
@@ -992,7 +1023,7 @@ func wrapLine(input string, prefixLength int, max int, tabstop int) []wrappedLin
 		} else if rs[0] == '\r' {
 			w++
 		} else {
-			w = runewidth.StringWidth(str)
+			w = uniseg.StringWidth(str)
 		}
 		width += w
 
@@ -1071,14 +1102,21 @@ func (w *LightWindow) CFill(fg Color, bg Color, attr Attr, text string) FillRetu
 }
 
 func (w *LightWindow) FinishFill() {
-	w.MoveAndClear(w.posy, w.posx)
+	if w.posy < w.height {
+		w.MoveAndClear(w.posy, w.posx)
+	}
 	for y := w.posy + 1; y < w.height; y++ {
 		w.MoveAndClear(y, 0)
 	}
 }
 
 func (w *LightWindow) Erase() {
-	w.drawBorder(false)
-	// We don't erase the window here to avoid flickering during scroll
+	w.DrawBorder()
 	w.Move(0, 0)
+	w.FinishFill()
+	w.Move(0, 0)
+}
+
+func (w *LightWindow) EraseMaybe() bool {
+	return false
 }

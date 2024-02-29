@@ -57,7 +57,9 @@ else ifeq ($(UNAME_M),armv6l)
 else ifeq ($(UNAME_M),armv7l)
 	BINARY := $(BINARYARM7)
 else ifeq ($(UNAME_M),armv8l)
-	BINARY := $(BINARYARM8)
+	# armv8l is always 32-bit and should implement the armv7 ISA, so
+	# just use the same filename as for armv7.
+	BINARY := $(BINARYARM7)
 else ifeq ($(UNAME_M),arm64)
 	BINARY := $(BINARYARM8)
 else ifeq ($(UNAME_M),aarch64)
@@ -87,10 +89,17 @@ bench:
 
 install: bin/fzf
 
+generate:
+	PATH=$(PATH):$(GOPATH)/bin $(GO) generate ./...
+
 build:
-	goreleaser --rm-dist --snapshot
+	goreleaser build --clean --snapshot --skip=post-hooks
 
 release:
+	# Make sure that the tests pass and the build works
+	TAGS=tcell make test
+	make test build clean
+
 ifndef GITHUB_TOKEN
 	$(error GITHUB_TOKEN is not defined)
 endif
@@ -117,7 +126,7 @@ endif
 	git push origin temp --follow-tags --force
 
 	# Make a GitHub release
-	goreleaser --rm-dist --release-notes tmp/release-note
+	goreleaser --clean --release-notes tmp/release-note
 
 	# Push to master
 	git checkout master
@@ -175,4 +184,4 @@ update:
 	$(GO) get -u
 	$(GO) mod tidy
 
-.PHONY: all build release test bench install clean docker docker-test update
+.PHONY: all generate build release test bench install clean docker docker-test update

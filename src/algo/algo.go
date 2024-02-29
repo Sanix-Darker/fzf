@@ -221,9 +221,9 @@ func charClassOfAscii(char rune) charClass {
 		return charUpper
 	} else if char >= '0' && char <= '9' {
 		return charNumber
-	} else if strings.IndexRune(whiteChars, char) >= 0 {
+	} else if strings.ContainsRune(whiteChars, char) {
 		return charWhite
-	} else if strings.IndexRune(delimiterChars, char) >= 0 {
+	} else if strings.ContainsRune(delimiterChars, char) {
 		return charDelimiter
 	}
 	return charNonWord
@@ -240,7 +240,7 @@ func charClassOfNonAscii(char rune) charClass {
 		return charLetter
 	} else if unicode.IsSpace(char) {
 		return charWhite
-	} else if strings.IndexRune(delimiterChars, char) >= 0 {
+	} else if strings.ContainsRune(delimiterChars, char) {
 		return charDelimiter
 	}
 	return charNonWord
@@ -255,24 +255,29 @@ func charClassOf(char rune) charClass {
 
 func bonusFor(prevClass charClass, class charClass) int16 {
 	if class > charNonWord {
-		if prevClass == charWhite {
+		switch prevClass {
+		case charWhite:
 			// Word boundary after whitespace
 			return bonusBoundaryWhite
-		} else if prevClass == charDelimiter {
+		case charDelimiter:
 			// Word boundary after a delimiter character
 			return bonusBoundaryDelimiter
-		} else if prevClass == charNonWord {
+		case charNonWord:
 			// Word boundary
 			return bonusBoundary
 		}
 	}
+
 	if prevClass == charLower && class == charUpper ||
 		prevClass != charNumber && class == charNumber {
 		// camelCase letter123
 		return bonusCamel123
-	} else if class == charNonWord {
+	}
+
+	switch class {
+	case charNonWord, charDelimiter:
 		return bonusNonWord
-	} else if class == charWhite {
+	case charWhite:
 		return bonusBoundaryWhite
 	}
 	return 0
