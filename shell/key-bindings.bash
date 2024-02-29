@@ -44,7 +44,7 @@ fzf-file-widget() {
 __fzf_cd__() {
   local cmd opts dir
   cmd="${FZF_ALT_C_COMMAND:-"command find -L . -mindepth 1 \\( -path '*/.*' -o -fstype 'sysfs' -o -fstype 'devfs' -o -fstype 'devtmpfs' -o -fstype 'proc' \\) -prune \
-    -o -type d -print 2> /dev/null | command cut -b3-"}"
+    -o -type d -print 2> /dev/null | cut -b3-"}"
   opts="--height ${FZF_TMUX_HEIGHT:-40%} --bind=ctrl-z:ignore --reverse --scheme=path ${FZF_DEFAULT_OPTS-} ${FZF_ALT_C_OPTS-} +m"
   dir=$(set +o pipefail; eval "$cmd" | FZF_DEFAULT_OPTS="$opts" $(__fzfcmd)) && printf 'builtin cd -- %q' "$dir"
 }
@@ -57,7 +57,7 @@ if command -v perl > /dev/null; then
     output=$(
       set +o pipefail
       builtin fc -lnr -2147483648 |
-        last_hist=$(HISTTIMEFORMAT='' builtin history 1) command perl -n -l0 -e "$script" |
+        last_hist=$(HISTTIMEFORMAT='' builtin history 1) perl -n -l0 -e "$script" |
         FZF_DEFAULT_OPTS="$opts" $(__fzfcmd) --query "$READLINE_LINE"
     ) || return
     READLINE_LINE=${output#*$'\t'}
@@ -67,14 +67,16 @@ if command -v perl > /dev/null; then
       READLINE_POINT=0x7fffffff
     fi
   }
-else # awk - fallback for POSIX systems
+else # awk
   __fzf_history__() {
-    local output opts script n x y z d
+    local output opts script
     if [[ -z $__fzf_awk ]]; then
       __fzf_awk=awk
-      # choose the faster mawk if: it's installed && build date >= 20230322 && version >= 1.3.4
-      IFS=' .' read n x y z d <<< $(command mawk -W version 2> /dev/null)
-      [[ $n == mawk ]] && (( d >= 20230302 && (x *1000 +y) *1000 +z >= 1003004 )) && __fzf_awk=mawk
+      # if installed, mawk is faster
+      command -v mawk > /dev/null &&
+        mawk --version |          # at least 1.3.4
+          awk 'NR == 1 { split($2, a, "."); v=(a[1]*1000000+ a[2]*1000+ a[3]*1); exit !(v >= 1003004) }' &&
+          __fzf_awk=mawk
     fi
     opts="--height ${FZF_TMUX_HEIGHT:-40%} --bind=ctrl-z:ignore ${FZF_DEFAULT_OPTS-} -n2..,.. --scheme=history --bind=ctrl-r:toggle-sort ${FZF_CTRL_R_OPTS-} +m --read0"
     [[ $(HISTTIMEFORMAT='' builtin history 1) =~ [[:digit:]]+ ]]    # how many history entries
@@ -86,7 +88,7 @@ else # awk - fallback for POSIX systems
     output=$(
       set +o pipefail
       builtin fc -lnr -2147483648 2> /dev/null |   # ( $'\t '<lines>$'\n' )* ; <lines> ::= [^\n]* ( $'\n'<lines> )*
-        command $__fzf_awk "$script"           |   # ( <counter>$'\t'<lines>$'\000' )*
+        $__fzf_awk "$script"                          |   # ( <counter>$'\t'<lines>$'\000' )*
         FZF_DEFAULT_OPTS="$opts" $(__fzfcmd) --query "$READLINE_LINE"
     ) || return
     READLINE_LINE=${output#*$'\t'}
@@ -98,9 +100,18 @@ else # awk - fallback for POSIX systems
   }
 fi
 
+__tmux_search__(){
+    $HOME/.fzf/shell/tmux_search.sh
+}
+
+__path_cmd_search__(){
+    source ~/.bash_aliases && \
+        CMD_TO_BE_EXECUTED="$(tac $PWD/.cmd_history | fzf --height ${FZF_TMUX_HEIGHT:-40%})" && \
+        echo $CMD_TO_BE_EXECUTED && $CMD_TO_BE_EXECUTED
+}
+
 # Required to refresh the prompt after fzf
 bind -m emacs-standard '"\er": redraw-current-line'
-
 bind -m vi-command '"\C-z": emacs-editing-mode'
 bind -m vi-insert '"\C-z": emacs-editing-mode'
 bind -m emacs-standard '"\C-z": vi-editing-mode'
@@ -115,6 +126,16 @@ if (( BASH_VERSINFO[0] < 4 )); then
   bind -m emacs-standard '"\C-r": "\C-e \C-u\C-y\ey\C-u`__fzf_history__`\e\C-e\er"'
   bind -m vi-command '"\C-r": "\C-z\C-r\C-z"'
   bind -m vi-insert '"\C-r": "\C-z\C-r\C-z"'
+
+  # CTRL-F - Paste the selected command from history into the command line
+  bind -m emacs-standard '"\C-f": "\C-e \C-u\C-y\ey\C-u"$(__tmux_search__)"\e\C-e\er"'
+  bind -m vi-command '"\C-f": "\C-z\C-f\C-z"'
+  bind -m vi-insert '"\C-f": "\C-z\C-f\C-z"'
+
+  # CTRL-H - path command line search on fzf
+  bind -m emacs-standard '"\C-h": "\C-e \C-u\C-y\ey\C-u"$(__path_cmd_search__)"\e\C-e\er"'
+  bind -m vi-command '"\C-h": "\C-z\C-f\C-z"'
+  bind -m vi-insert '"\C-h": "\C-z\C-f\C-z"'
 else
   # CTRL-T - Paste the selected file path into the command line
   bind -m emacs-standard -x '"\C-t": fzf-file-widget'
@@ -125,6 +146,16 @@ else
   bind -m emacs-standard -x '"\C-r": __fzf_history__'
   bind -m vi-command -x '"\C-r": __fzf_history__'
   bind -m vi-insert -x '"\C-r": __fzf_history__'
+
+  # CTRL-F - tmux search session/window
+  bind -m emacs-standard -x '"\C-f": __tmux_search__'
+  bind -m vi-command -x '"\C-f": __tmux_search__'
+  bind -m vi-insert -x '"\C-f": __tmux_search__'
+
+  # CTRL-H - path command line search on fzf
+  bind -m emacs-standard -x '"\C-h": __path_cmd_search__'
+  bind -m vi-command -x '"\C-h": __path_cmd_search__'
+  bind -m vi-insert -x '"\C-h": __path_cmd_search__'
 fi
 
 # ALT-C - cd into the selected directory
