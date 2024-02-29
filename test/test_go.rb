@@ -1918,7 +1918,7 @@ class TestGoFZF < TestBase
   end
 
   def test_reload
-    tmux.send_keys %(seq 1000 | #{FZF} --bind 'change:reload(seq {q}),a:reload(seq 100),b:reload:seq 200' --header-lines 2 --multi 2), :Enter
+    tmux.send_keys %(seq 1000 | #{FZF} --bind 'change:reload(seq $FZF_QUERY),a:reload(seq 100),b:reload:seq 200' --header-lines 2 --multi 2), :Enter
     tmux.until { |lines| assert_equal 998, lines.match_count }
     tmux.send_keys 'a'
     tmux.until do |lines|
@@ -2582,6 +2582,7 @@ class TestGoFZF < TestBase
   def test_change_preview_window_rotate
     tmux.send_keys "seq 100 | #{FZF} --preview-window left,border-none --preview 'echo hello' --bind '" \
       "a:change-preview-window(right|down|up|hidden|)'", :Enter
+    tmux.until { |lines| assert(lines.any? { _1.include?('100/100') }) }
     3.times do
       tmux.until { |lines| lines[0].start_with?('hello') }
       tmux.send_keys 'a'
