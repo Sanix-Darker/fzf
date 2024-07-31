@@ -2,7 +2,7 @@
 
 set -u
 
-version=0.48.1
+version=0.54.3
 auto_completion=
 key_bindings=
 update_config=2
@@ -115,7 +115,7 @@ link_fzf_in_path() {
 try_curl() {
   command -v curl > /dev/null &&
   if [[ $1 =~ tar.gz$ ]]; then
-    curl -fL $1 | tar -xzf -
+    curl -fL $1 | tar --no-same-owner -xzf -
   else
     local temp=${TMPDIR:-/tmp}/fzf.zip
     curl -fLo "$temp" $1 && unzip -o "$temp" && rm -f "$temp"
@@ -125,7 +125,7 @@ try_curl() {
 try_wget() {
   command -v wget > /dev/null &&
   if [[ $1 =~ tar.gz$ ]]; then
-    wget -O - $1 | tar -xzf -
+    wget -O - $1 | tar --no-same-owner -xzf -
   else
     local temp=${TMPDIR:-/tmp}/fzf.zip
     wget -O "$temp" $1 && unzip -o "$temp" && rm -f "$temp"
@@ -146,7 +146,7 @@ download() {
   fi
 
   local url
-  url=https://github.com/junegunn/fzf/releases/download/$version/${1}
+  url=https://github.com/junegunn/fzf/releases/download/v$version/${1}
   set -o pipefail
   if ! (try_curl $url || try_wget $url); then
     set +o pipefail
@@ -168,8 +168,8 @@ archi=$(uname -sm)
 binary_available=1
 binary_error=""
 case "$archi" in
-  Darwin\ arm64)      download fzf-$version-darwin_arm64.zip     ;;
-  Darwin\ x86_64)     download fzf-$version-darwin_amd64.zip     ;;
+  Darwin\ arm64)      download fzf-$version-darwin_arm64.tar.gz  ;;
+  Darwin\ x86_64)     download fzf-$version-darwin_amd64.tar.gz  ;;
   Linux\ armv5*)      download fzf-$version-linux_armv5.tar.gz   ;;
   Linux\ armv6*)      download fzf-$version-linux_armv6.tar.gz   ;;
   Linux\ armv7*)      download fzf-$version-linux_armv7.tar.gz   ;;
@@ -265,7 +265,11 @@ fi
 EOF
 
   if [[ $auto_completion -eq 1 ]] && [[ $key_bindings -eq 1 ]]; then
-    echo "eval \"\$(fzf --$shell)\"" >> "$src"
+    if [[ "$shell" = zsh ]]; then
+      echo "source <(fzf --$shell)" >> "$src"
+    else
+      echo "eval \"\$(fzf --$shell)\"" >> "$src"
+    fi
   else
     cat >> "$src" << EOF
 # Auto-completion

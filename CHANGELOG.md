@@ -1,6 +1,297 @@
 CHANGELOG
 =========
 
+0.54.3
+------
+- Fixed incompatibility of adaptive height specification and 'start:reload'
+  ```sh
+  # A regression in 0.54.0 would cause this to fail
+  fzf --height '~100%' --bind 'start:reload:seq 10'
+  ```
+- Environment variables are now available to `$FZF_DEFAULT_COMMAND`
+  ```sh
+  FZF_DEFAULT_COMMAND='echo $FZF_QUERY' fzf --query foo
+  ```
+
+0.54.2
+------
+- Fixed incorrect syntax highlighting of truncated multi-line entries
+- Updated GoReleaser to 2.1.0 to simplify notarization of macOS binaries
+    - macOS archives will be in `tar.gz` format instead of `zip` format since we no longer notarize the zip files but binaries
+- (Windows) Reverted a mintty fix in 0.54.0
+    - As a result, mouse may not work on mintty in fullscreen mode. However, fzf will correctly read non-ASCII input in fullscreen mode (`--no-height`).
+    - fzf unfortunately cannot read non-ASCII input when not in fullscreen mode on Windows. So if you need to input non-ASCII characters, add `--no-height` to your `$FZF_DEFAULT_OPTS`.
+    - Any help in fixing this issue will be appreciated (#3799, #3847).
+
+0.54.1
+------
+- Updated [fastwalk](https://github.com/charlievieth/fastwalk) dependency for built-in directory walker
+    - [fastwalk: add optional sorting and improve documentation](https://github.com/charlievieth/fastwalk/pull/27)
+    - [fastwalk: only check if MSYSTEM is set during MSYS/MSYS2](https://github.com/charlievieth/fastwalk/pull/28)
+    - Thanks to @charlievieth
+- Reverted ALT-C binding of fish to use `cd` instead of `builtin cd`
+    - `builtin cd` was introduced to work around a bug of `cd` coming from `zoxide init --cmd cd fish` where it cannot handle `--` argument.
+    - However, the default `cd` of fish is actually a wrapper function for supporting `cd -`, so we want to use it instead.
+    - See [#3928](https://github.com/junegunn/fzf/pull/3928) for more information and consider helping zoxide fix the bug.
+
+0.54.0
+------
+_Release highlights: https://junegunn.github.io/fzf/releases/0.54.0/_
+
+- Implemented line wrap of long items
+    - `--wrap` option enables line wrap
+    - `--wrap-sign` customizes the sign for wrapped lines (default: `↳ `)
+    - `toggle-wrap` action toggles line wrap
+      ```sh
+      history | fzf --tac --wrap --bind 'ctrl-/:toggle-wrap' --wrap-sign $'\t↳ '
+      ```
+    - fzf by default binds `CTRL-/` and `ALT-/` to `toggle-wrap`
+- Updated shell integration scripts to leverage line wrap
+    - CTRL-R binding includes `--wrap-sign $'\t↳ '` to indent wrapped lines
+    - `kill **` completion uses `--wrap` to show the whole line by default
+      instead of showing it in the preview window
+- Added `--info-command` option for customizing the info line
+  ```sh
+  # Prepend the current cursor position in yellow
+  fzf --info-command='echo -e "\x1b[33;1m$FZF_POS\x1b[m/$FZF_INFO 💛"'
+  ```
+    - `$FZF_INFO` is set to the original info text
+    - ANSI color codes are supported
+- Pointer and marker signs can be set to empty strings
+  ```sh
+  # Minimal style
+  fzf --pointer '' --marker '' --prompt '' --info hidden
+  ```
+- Better cache management and improved rendering for `--tail`
+- Improved `--sync` behavior
+    - When `--sync` is provided, fzf will not render the interface until the initial filtering and the associated actions (bound to any of `start`, `load`, `result`, or `focus`) are complete.
+      ```sh
+      # fzf will not render intermediate states
+      (sleep 1; seq 1000000; sleep 1) |
+        fzf --sync --query 5 --listen --bind start:up,load:up,result:up,focus:change-header:Ready
+      ```
+- GET endpoint is now available from `execute` and `transform` actions (it used to timeout due to lock conflict)
+  ```sh
+  fzf --listen --sync --bind 'focus:transform-header:curl -s localhost:$FZF_PORT?limit=0 | jq .'
+  ```
+- Added `offset-middle` action to place the current item is in the middle of the screen
+- fzf will not start the initial reader when `reload` or `reload-sync` is bound to `start` event. `fzf < /dev/null` or `: | fzf` are no longer required and extraneous `load` event will not fire due to the empty list.
+  ```sh
+  # Now this will work as expected. Previously, this would print an invalid header line.
+  # `fzf < /dev/null` or `: | fzf` would fix the problem, but then an extraneous 
+  # `load` event would fire and the header would be prematurely updated.
+  fzf --header 'Loading ...' --header-lines 1 \
+      --bind 'start:reload:sleep 1; ps -ef' \
+      --bind 'load:change-header:Loaded!'
+  ```
+- Fixed mouse support on Windows
+- Fixed crash when using `--tiebreak=end` with very long items
+- zsh 5.0 compatibility (thanks to @LangLangBart)
+- Fixed `--walker-skip` to also skip symlinks to directories
+- Fixed `result` event not fired when input stream is not complete
+- New tags will have `v` prefix so that they are available on https://proxy.golang.org/
+
+0.53.0
+------
+_Release highlights: https://junegunn.github.io/fzf/releases/0.53.0/_
+
+- Multi-line display
+    - See [Processing multi-line items](https://junegunn.github.io/fzf/tips/processing-multi-line-items/)
+    - fzf can now display multi-line items
+      ```sh
+      # All bash functions, highlighted
+      declare -f | perl -0777 -pe 's/^}\n/}\0/gm' |
+        bat --plain --language bash --color always |
+        fzf --read0 --ansi --reverse --multi --highlight-line
+
+      # Ripgrep multi-line output
+      rg --pretty bash | perl -0777 -pe 's/\n\n/\n\0/gm' |
+        fzf --read0 --ansi --multi --highlight-line --reverse --tmux 70%
+      ```
+        - To disable multi-line display, use `--no-multi-line`
+    - CTRL-R bindings of bash, zsh, and fish have been updated to leverage multi-line display
+    - The default `--pointer` and `--marker` have been changed from `>` to Unicode bar characters as they look better with multi-line items
+    - Added `--marker-multi-line` to customize the select marker for multi-line entries with the default set to `╻┃╹`
+      ```
+      ╻First line
+      ┃...
+      ╹Last line
+      ```
+- Native tmux integration
+    - Added `--tmux` option to replace fzf-tmux script and simplify distribution
+      ```sh
+      # --tmux [center|top|bottom|left|right][,SIZE[%]][,SIZE[%]]
+      # Center, 100% width and 70% height
+      fzf --tmux 100%,70% --border horizontal --padding 1,2
+
+      # Left, 30% width
+      fzf --tmux left,30%
+
+      # Bottom, 50% height
+      fzf --tmux bottom,50%
+      ```
+        - To keep the implementation simple, it only uses popups. You need tmux 3.3 or later.
+    - To use `--tmux` in Vim plugin:
+      ```vim
+      let g:fzf_layout = { 'tmux': '100%,70%' }
+      ```
+- Added support for endless input streams
+    - See [Browsing log stream with fzf](https://junegunn.github.io/fzf/tips/browsing-log-streams/)
+    - Added `--tail=NUM` option to limit the number of items to keep in memory. This is useful when you want to browse an endless stream of data (e.g. log stream) with fzf while limiting memory usage.
+      ```sh
+      # Interactive filtering of a log stream
+      tail -f *.log | fzf --tail 100000 --tac --no-sort --exact
+      ```
+- Better Windows Support
+    - fzf now works on Git bash (mintty) out of the box via winpty integration
+    - Many fixes and improvements for Windows
+- man page is now embedded in the binary; `fzf --man` to see it
+- Changed the default `--scroll-off` to 3, as we think it's a better default
+- Process started by `execute` action now directly writes to and reads from `/dev/tty`. Manual `/dev/tty` redirection for interactive programs is no longer required.
+  ```sh
+  # Vim will work fine without /dev/tty redirection
+  ls | fzf --bind 'space:execute:vim {}' > selected
+  ```
+- Added `print(...)` action to queue an arbitrary string to be printed on exit. This was mainly added to work around the limitation of `--expect` where it's not compatible with `--bind` on the same key and it would ignore other actions bound to it.
+  ```sh
+  # This doesn't work as expected because --expect is not compatible with --bind
+  fzf --multi --expect ctrl-y --bind 'ctrl-y:select-all'
+
+  # This is something you can do instead
+  fzf --multi --bind 'enter:print()+accept,ctrl-y:select-all+print(ctrl-y)+accept'
+  ```
+    - We also considered making them compatible, but realized that some users may have been relying on the current behavior.
+- [`NO_COLOR`](https://no-color.org/) environment variable is now respected. If the variable is set, fzf defaults to `--no-color` unless otherwise specified.
+
+0.52.1
+------
+- Fixed a critical bug in the Windows version
+    - Windows users are strongly encouraged to upgrade to this version
+
+0.52.0
+------
+- Added `--highlight-line` to highlight the whole current line (à la `set cursorline` of Vim)
+- Added color names for selected lines: `selected-fg`, `selected-bg`, and `selected-hl`
+  ```sh
+  fzf --border --multi --info inline-right --layout reverse --marker ▏ --pointer ▌ --prompt '▌ '  \
+      --highlight-line --color gutter:-1,selected-bg:238,selected-fg:146,current-fg:189
+  ```
+- Added `click-header` event that is triggered when the header section is clicked. When the event is triggered, `$FZF_CLICK_HEADER_COLUMN` and `$FZF_CLICK_HEADER_LINE` are set.
+  ```sh
+  fd --type f |
+    fzf --header $'[Files] [Directories]' --header-first \
+        --bind 'click-header:transform:
+          (( FZF_CLICK_HEADER_COLUMN <= 7 )) && echo "reload(fd --type f)"
+          (( FZF_CLICK_HEADER_COLUMN >= 9 )) && echo "reload(fd --type d)"
+        '
+  ```
+- Add `$FZF_COMPLETION_{DIR,PATH}_OPTS` for separately customizing the behavior of fuzzy completion
+  ```sh
+  # Set --walker options without 'follow' not to follow symbolic links
+  FZF_COMPLETION_PATH_OPTS="--walker=file,dir,hidden"
+  FZF_COMPLETION_DIR_OPTS="--walker=dir,hidden"
+  ```
+- Fixed Windows argument escaping
+- Bug fixes and improvements
+- The code was heavily refactored to allow using fzf as a library in Go programs. The API is still experimental and subject to change.
+    - https://gist.github.com/junegunn/193990b65be48a38aac6ac49d5669170
+
+0.51.0
+------
+- Added a new environment variable `$FZF_POS` exported to the child processes. It's the vertical position of the cursor in the list starting from 1.
+  ```sh
+  # Toggle selection to the top or to the bottom
+  seq 30 | fzf --multi --bind 'load:pos(10)' \
+    --bind 'shift-up:transform:for _ in $(seq $FZF_POS $FZF_MATCH_COUNT); do echo -n +toggle+up; done' \
+    --bind 'shift-down:transform:for _ in $(seq 1 $FZF_POS); do echo -n +toggle+down; done'
+  ```
+- Added `--with-shell` option to start child processes with a custom shell command and flags
+  ```sh
+  gem list | fzf --with-shell 'ruby -e' \
+    --preview 'pp Gem::Specification.find_by_name({1})' \
+    --bind 'ctrl-o:execute-silent:
+        spec = Gem::Specification.find_by_name({1})
+        [spec.homepage, *spec.metadata.filter { _1.end_with?("uri") }.values].uniq.each do
+          system "open", _1
+        end
+    '
+  ```
+- Added `change-multi` action for dynamically changing `--multi` option
+    - `change-multi` - enable multi-select mode with no limit
+    - `change-multi(NUM)` - enable multi-select mode with a limit
+    - `change-multi(0)` - disable multi-select mode
+- Windows improvements
+    - `become` action is now supported on Windows
+        - Unlike in *nix, this does not use `execve(2)`. Instead it spawns a new process and waits for it to finish, so the exact behavior may differ.
+    - Fixed argument escaping for Windows cmd.exe. No redundant escaping of backslashes.
+- Bug fixes and improvements
+
+0.50.0
+------
+- Search performance optimization. You can observe 50%+ improvement in some scenarios.
+  ```
+  $ rg --line-number --no-heading --smart-case . > $DATA
+
+  $ wc < $DATA
+   5520118 26862362 897487793
+
+  $ hyperfine -w 1 -L bin fzf-0.49.0,fzf-7ce6452,fzf-a5447b8,fzf '{bin} --filter "///" < $DATA | head -30'
+  Summary
+    fzf --filter "///" < $DATA | head -30 ran
+      1.16 ± 0.03 times faster than fzf-a5447b8 --filter "///" < $DATA | head -30
+      1.23 ± 0.03 times faster than fzf-7ce6452 --filter "///" < $DATA | head -30
+      1.52 ± 0.03 times faster than fzf-0.49.0 --filter "///" < $DATA | head -30
+  ```
+- Added `jump` and `jump-cancel` events that are triggered when leaving `jump` mode
+  ```sh
+  # Default behavior
+  fzf --bind space:jump
+
+  # Same as jump-accept action
+  fzf --bind space:jump,jump:accept
+
+  # Accept on jump, abort on cancel
+  fzf --bind space:jump,jump:accept,jump-cancel:abort
+
+  # Change header on jump-cancel
+  fzf --bind 'space:change-header(Type jump label)+jump,jump-cancel:change-header:Jump cancelled'
+  ```
+- Added a new environment variable `$FZF_KEY` exported to the child processes. It's the name of the last key pressed.
+  ```sh
+  fzf --bind 'space:jump,jump:accept,jump-cancel:transform:[[ $FZF_KEY =~ ctrl-c ]] && echo abort'
+  ```
+- fzf can be built with profiling options. See [BUILD.md](BUILD.md) for more information.
+- Bug fixes
+
+0.49.0
+------
+- Ingestion performance improved by around 40% (more or less depending on options)
+- `--info=hidden` and `--info=inline-right` will no longer hide the horizontal separator by default. This gives you more flexibility in customizing the layout.
+    ```sh
+    fzf --border --info=inline-right
+    fzf --border --info=inline-right --separator ═
+    fzf --border --info=inline-right --no-separator
+    fzf --border --info=hidden
+    fzf --border --info=hidden --separator ━
+    fzf --border --info=hidden --no-separator
+    ```
+- Added two environment variables exported to the child processes
+    - `FZF_PREVIEW_LABEL`
+    - `FZF_BORDER_LABEL`
+    ```sh
+    # Use the current value of $FZF_PREVIEW_LABEL to determine which actions to perform
+    git ls-files |
+      fzf --header 'Press CTRL-P to change preview mode' \
+          --bind='ctrl-p:transform:[[ $FZF_PREVIEW_LABEL =~ cat ]] \
+          && echo "change-preview(git log --color=always \{})+change-preview-label([[ log ]])" \
+          || echo "change-preview(bat --color=always \{})+change-preview-label([[ cat ]])"'
+    ```
+- Renamed `track` action to `track-current` to highlight the difference between the global tracking state set by `--track` and a one-off tracking action
+    - `track` is still available as an alias
+- Added `untrack-current` and `toggle-track-current` actions
+    - `*-current` actions are no-op when the global tracking state is set
+- Bug fixes and minor improvements
+
 0.48.1
 ------
 - CTRL-T and ALT-C bindings can be disabled by setting `FZF_CTRL_T_COMMAND` and `FZF_ALT_C_COMMAND` to empty strings respectively when sourcing the script
